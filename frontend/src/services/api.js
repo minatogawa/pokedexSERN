@@ -1,9 +1,13 @@
 import axios from 'axios';
 
-// Use environment variable for production (Vercel) or fallback for local development
-const API_BASE_URL = import.meta.env.VITE_API_URL
-  ? `${import.meta.env.VITE_API_URL}/api`
-  : 'http://localhost:5000/api';
+// Build API base URL. If VITE_API_URL already ends with /api, don't append another segment.
+const envUrl = import.meta.env.VITE_API_URL;
+const normalizedBase = envUrl
+  ? envUrl.replace(/\/$/, '') // drop trailing slash
+  : 'http://localhost:5000';
+const API_BASE_URL = normalizedBase.endsWith('/api')
+  ? normalizedBase
+  : `${normalizedBase}/api`;
 
 const api = axios.create({
   baseURL: API_BASE_URL,

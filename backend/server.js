@@ -1,3 +1,7 @@
+// Load environment variables per NODE_ENV (defaults to development)
+const envName = process.env.NODE_ENV || 'development';
+require('dotenv').config({ path: `.env.${envName}` });
+require('dotenv').config(); // fallback to .env if specific file is missing
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');

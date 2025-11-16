@@ -1,5 +1,10 @@
+// Load environment variables (defaults to .env.development for local runs)
+const envName = process.env.NODE_ENV || 'development';
+require('dotenv').config({ path: `.env.${envName}` });
+require('dotenv').config();
+
 const bcrypt = require('bcryptjs');
-const db = require('./database');
+const pool = require('./database');
 
 const POKEMON_DATA = [
     { name: 'Bulbasaur', types: '["Grass", "Poison"]', sprites: '{"front_default": "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/1.png"}' },
@@ -22,71 +27,40 @@ const SEED_PASSWORD = 'password123';
 async function seed() {
     console.log('Starting database seeding...');
 
-    // Using a Promise-based wrapper for db.run and db.get
-    const run = (query, params = []) => new Promise((resolve, reject) => {
-        db.run(query, params, function (err) {
-            if (err) {
-                console.error('Error running query:', query, params);
-                return reject(err);
-            }
-            resolve({ lastID: this.lastID, changes: this.changes });
-        });
-    });
-
+    const client = await pool.connect();
     try {
-        await run('BEGIN TRANSACTION;');
+        await client.query('BEGIN');
 
-        // Create tables
-        await run(`
-            CREATE TABLE IF NOT EXISTS Users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL
-            )
-        `);
-        console.log('Table "Users" created or already exists.');
-
-        await run(`
-            CREATE TABLE IF NOT EXISTS Pokemon (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                types TEXT NOT NULL,
-                sprites TEXT NOT NULL,
-                trainer_id INTEGER NOT NULL,
-                FOREIGN KEY(trainer_id) REFERENCES Users(id)
-            )
-        `);
-        console.log('Table "Pokemon" created or already exists.');
-
-        // Clear existing data
-        await run('DELETE FROM Pokemon');
-        await run('DELETE FROM Users');
-        console.log('Cleared existing data from "Users" and "Pokemon" tables.');
-
-        // Hash password and insert user
-        const saltRounds = 10;
-        const hashedPassword = await bcrypt.hash(SEED_PASSWORD, saltRounds);
-        
-        const { lastID: trainerId } = await run(
-            'INSERT INTO Users (email, password_hash) VALUES (?, ?)',
-            [SEED_EMAIL, hashedPassword]
+        const existing = await client.query(
+            'SELECT id FROM Users WHERE email = $1',
+            [SEED_EMAIL]
         );
-        console.log(`Seed user created with ID: ${trainerId}`);
+        let trainerId = existing.rows[0]?.id;
 
-        // Insert Pokemon
-        const stmt = db.prepare('INSERT INTO Pokemon (name, types, sprites, trainer_id) VALUES (?, ?, ?, ?)');
-        for (const pokemon of POKEMON_DATA) {
-            await new Promise((resolve, reject) => {
-                stmt.run([pokemon.name, pokemon.types, pokemon.sprites, trainerId], (err) => {
-                    if (err) return reject(err);
-                    resolve();
-                });
-            });
+        if (!trainerId) {
+            const hashedPassword = await bcrypt.hash(SEED_PASSWORD, 10);
+            const inserted = await client.query(
+                'INSERT INTO Users (email, password_hash) VALUES ($1, $2) RETURNING id',
+                [SEED_EMAIL, hashedPassword]
+            );
+            trainerId = inserted.rows[0].id;
+            console.log(`Seed user created with ID: ${trainerId}`);
+        } else {
+            console.log(`Seed user already exists with ID: ${trainerId}`);
         }
-        stmt.finalize();
-        console.log(`${POKEMON_DATA.length} sample Pokémon inserted.`);
 
-        await run('COMMIT;');
+        // Clear existing Pokémon for this trainer to avoid duplicates
+        await client.query('DELETE FROM Pokemon WHERE trainer_id = $1', [trainerId]);
+
+        for (const pokemon of POKEMON_DATA) {
+            await client.query(
+                'INSERT INTO Pokemon (name, types, sprites, trainer_id) VALUES ($1, $2, $3, $4)',
+                [pokemon.name, pokemon.types, pokemon.sprites, trainerId]
+            );
+        }
+        console.log(`${POKEMON_DATA.length} sample Pokémon inserted for trainer ${trainerId}.`);
+
+        await client.query('COMMIT');
 
         console.log('\nDatabase seeding completed successfully!');
         console.log('========================================');
@@ -96,16 +70,12 @@ async function seed() {
         console.log('========================================');
 
     } catch (error) {
-        await run('ROLLBACK;');
+        await client.query('ROLLBACK');
         console.error('Error during database seeding:', error.message);
     } finally {
-        db.close((err) => {
-            if (err) {
-                console.error('Error closing the database:', err.message);
-            } else {
-                console.log('Database connection closed.');
-            }
-        });
+        client.release();
+        console.log('Database connection closed.');
+        await pool.end(); // ensure Node process exits cleanly after seeding
     }
 }
 

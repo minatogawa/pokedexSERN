@@ -1,3 +1,8 @@
-node_modules
+
+# Dependencies
+/node_modules
+
+# Environment variables
 .env
-database.db
+.env.*
+!.env.example
