@@ -1,27 +1,11 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const db = require('../database');
+const pool = require('../database');
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecret';
 const SALT_ROUNDS = 10;
-
-const get = (sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row);
-    });
-  });
-
-const run = (sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) return reject(err);
-      resolve({ id: this.lastID, changes: this.changes });
-    });
-  });
 
 router.post('/register', async (req, res) => {
   try {
@@ -31,18 +15,18 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
-    const existingUser = await get('SELECT id FROM Users WHERE email = ?', [email]);
-    if (existingUser) {
+    const existingUser = await pool.query('SELECT id FROM Users WHERE email = $1', [email]);
+    if (existingUser.rows[0]) {
       return res.status(400).json({ error: 'Este email já está em uso' });
     }
 
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    const result = await run('INSERT INTO Users (email, password_hash) VALUES (?, ?)', [
-      email,
-      passwordHash,
-    ]);
+    const result = await pool.query(
+      'INSERT INTO Users (email, password_hash) VALUES ($1, $2) RETURNING id',
+      [email, passwordHash]
+    );
 
-    const token = jwt.sign({ id: result.id, email }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ id: result.rows[0].id, email }, JWT_SECRET, { expiresIn: '7d' });
     return res.status(201).json({ message: 'User registered successfully.', token });
   } catch (err) {
     console.error(err);
@@ -58,7 +42,8 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' });
     }
 
-    const user = await get('SELECT * FROM Users WHERE email = ?', [email]);
+    const userResult = await pool.query('SELECT * FROM Users WHERE email = $1', [email]);
+    const user = userResult.rows[0];
     if (!user) {
       return res.status(400).json({ error: 'Email ou senha inválidos' });
     }

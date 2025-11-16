@@ -1,32 +1,8 @@
 const express = require('express');
-const db = require('../database');
+const pool = require('../database');
 const authMiddleware = require('../middleware/authMiddleware');
 
 const router = express.Router();
-
-const get = (sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row);
-    });
-  });
-
-const all = (sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
-  });
-
-const run = (sql, params = []) =>
-  new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) return reject(err);
-      resolve({ id: this.lastID, changes: this.changes });
-    });
-  });
 
 const parsePokemon = (row) => {
   if (!row) return null;
@@ -49,8 +25,8 @@ router.use(authMiddleware);
 
 router.get('/', async (req, res) => {
   try {
-    const rows = await all('SELECT * FROM Pokemon WHERE trainer_id = ?', [req.user.id]);
-    const parsed = rows.map(parsePokemon);
+    const result = await pool.query('SELECT * FROM Pokemon WHERE trainer_id = $1', [req.user.id]);
+    const parsed = result.rows.map(parsePokemon);
     return res.json(parsed);
   } catch (err) {
     console.error(err);
@@ -74,17 +50,12 @@ router.post('/', async (req, res) => {
   try {
     const typesJson = JSON.stringify(types);
     const spritesJson = JSON.stringify(sprites);
-    const result = await run(
-      'INSERT INTO Pokemon (name, types, sprites, trainer_id) VALUES (?, ?, ?, ?)',
+    const result = await pool.query(
+      'INSERT INTO Pokemon (name, types, sprites, trainer_id) VALUES ($1, $2, $3, $4) RETURNING *',
       [name, typesJson, spritesJson, req.user.id]
     );
 
-    const created = await get('SELECT * FROM Pokemon WHERE id = ? AND trainer_id = ?', [
-      result.id,
-      req.user.id,
-    ]);
-
-    return res.status(201).json(parsePokemon(created));
+    return res.status(201).json(parsePokemon(result.rows[0]));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Internal server error.' });
@@ -94,10 +65,11 @@ router.post('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const row = await get('SELECT * FROM Pokemon WHERE id = ? AND trainer_id = ?', [
+    const result = await pool.query('SELECT * FROM Pokemon WHERE id = $1 AND trainer_id = $2', [
       id,
       req.user.id,
     ]);
+    const row = result.rows[0];
 
     if (!row) {
       return res.status(404).json({ error: 'Pokemon not found.' });
@@ -115,10 +87,11 @@ router.put('/:id', async (req, res) => {
   const { name, types, sprites } = req.body;
 
   try {
-    const existing = await get('SELECT * FROM Pokemon WHERE id = ? AND trainer_id = ?', [
-      id,
-      req.user.id,
-    ]);
+    const existingResult = await pool.query(
+      'SELECT * FROM Pokemon WHERE id = $1 AND trainer_id = $2',
+      [id, req.user.id]
+    );
+    const existing = existingResult.rows[0];
 
     if (!existing) {
       return res.status(404).json({ error: 'Pokemon not found.' });
@@ -131,19 +104,12 @@ router.put('/:id', async (req, res) => {
         ? JSON.stringify(sprites)
         : existing.sprites;
 
-    await run('UPDATE Pokemon SET name = ?, types = ?, sprites = ? WHERE id = ?', [
-      updatedName,
-      updatedTypes,
-      updatedSprites,
-      id,
-    ]);
+    const updateResult = await pool.query(
+      'UPDATE Pokemon SET name = $1, types = $2, sprites = $3 WHERE id = $4 RETURNING *',
+      [updatedName, updatedTypes, updatedSprites, id]
+    );
 
-    const updated = await get('SELECT * FROM Pokemon WHERE id = ? AND trainer_id = ?', [
-      id,
-      req.user.id,
-    ]);
-
-    return res.json(parsePokemon(updated));
+    return res.json(parsePokemon(updateResult.rows[0]));
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Internal server error.' });
@@ -153,16 +119,17 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    const existing = await get('SELECT * FROM Pokemon WHERE id = ? AND trainer_id = ?', [
-      id,
-      req.user.id,
-    ]);
+    const existingResult = await pool.query(
+      'SELECT * FROM Pokemon WHERE id = $1 AND trainer_id = $2',
+      [id, req.user.id]
+    );
+    const existing = existingResult.rows[0];
 
     if (!existing) {
       return res.status(404).json({ error: 'Pokemon not found.' });
     }
 
-    await run('DELETE FROM Pokemon WHERE id = ? AND trainer_id = ?', [id, req.user.id]);
+    await pool.query('DELETE FROM Pokemon WHERE id = $1 AND trainer_id = $2', [id, req.user.id]);
     return res.json({ message: 'Pokemon deleted successfully.' });
   } catch (err) {
     console.error(err);

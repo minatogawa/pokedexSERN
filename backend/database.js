@@ -1,30 +1,32 @@
-const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 
-const dbPath = path.join(__dirname, 'database.db');
-const db = new sqlite3.Database(dbPath);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-db.serialize(() => {
-  db.run('PRAGMA foreign_keys = ON;');
-
-  db.run(`
+const initDb = async () => {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS Users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL
     )
   `);
 
-  db.run(`
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS Pokemon (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       types TEXT NOT NULL,
       sprites TEXT NOT NULL,
-      trainer_id INTEGER NOT NULL,
-      FOREIGN KEY(trainer_id) REFERENCES Users(id)
+      trainer_id INTEGER NOT NULL REFERENCES Users(id) ON DELETE CASCADE
     )
   `);
+};
+
+initDb().catch((err) => {
+  console.error('Failed to initialize database', err);
 });
 
-module.exports = db;
+module.exports = pool;

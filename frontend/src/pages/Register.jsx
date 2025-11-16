@@ -47,7 +47,14 @@ const Register = () => {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <h1>Register</h1>
+        <div className="auth-title">
+          <img
+            src="https://art.pixilart.com/5056936d6751a29.png"
+            alt="Trainer"
+            className="trainer-sprite"
+          />
+          <h1>Register</h1>
+        </div>
         <p className="auth-subtitle">Create your Pokedex account</p>
 
         <form onSubmit={handleSubmit} className="auth-form">
